@@ -28,25 +28,30 @@ terraform {
 provider "google" {
   region                = var.region
   user_project_override = true
-  project               = var.project_id
-  billing_project       = var.project_id
+  project               = var.deploy_project_id
+  billing_project       = var.deploy_project_id
 }
 
 ###############################################################################
 # GET DATA
 ###############################################################################
 
-# Project
-# https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/google_project
-data "google_project" "my-project" {
-  project_id = var.project_id
+# Monitored projects
+data "google_project" "monitored-projects" {
+  for_each   = toset(var.monitored_project_ids)
+  project_id = each.value
+}
+
+# Deploy project
+data "google_project" "deploy-project" {
+  project_id = var.deploy_project_id
 }
 
 # Billing account
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/billing_account
 data "google_billing_account" "my-billing-account" {
-  billing_account = data.google_project.my-project.billing_account
-  depends_on      = [data.google_project.my-project]
+  billing_account = data.google_project.deploy-project.billing_account
+  depends_on      = [data.google_project.deploy-project]
 }
 
 ###############################################################################
@@ -56,7 +61,7 @@ data "google_billing_account" "my-billing-account" {
 # Create service account
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/google_service_account
 resource "google_service_account" "my-cap-billing-service-account" {
-  project      = var.project_id
+  project      = var.deploy_project_id
   account_id   = "sa-cap-billing"
   display_name = "Cap Billing"
   description  = "Service Account to unlink project from billing account"
@@ -75,8 +80,8 @@ resource "null_resource" "wait-for-sa" {
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/google_project_iam_custom_role
 # https://cloud.google.com/billing/docs/how-to/modify-project#disable_billing_for_a_project
 resource "google_project_iam_custom_role" "my-cap-billing-role" {
-  project = var.project_id
-  # Camel case role id to use for this role. Cannot contain - character.
+  for_each    = toset(var.monitored_project_ids)
+  project     = each.value
   role_id     = "myCapBilling"
   title       = "Cap Billing Custom Role"
   description = "Custom role to unlink project from billing account"
@@ -89,8 +94,9 @@ resource "google_project_iam_custom_role" "my-cap-billing-role" {
 # Updates the IAM policy to grant a role to service account. Other members for the role for the project are preserved.
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/google_project_iam
 resource "google_project_iam_member" "my-cap-billing-role-binding" {
-  project    = var.project_id
-  role       = google_project_iam_custom_role.my-cap-billing-role.name #roles/billing.projectManager
+  for_each   = toset(var.monitored_project_ids)
+  project    = each.value
+  role       = google_project_iam_custom_role.my-cap-billing-role[each.value].name
   member     = "serviceAccount:${google_service_account.my-cap-billing-service-account.email}"
   depends_on = [google_project_iam_custom_role.my-cap-billing-role, null_resource.wait-for-sa]
 }
@@ -102,7 +108,7 @@ resource "google_project_iam_member" "my-cap-billing-role-binding" {
 # Create Pub/Sub topic
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic
 resource "google_pubsub_topic" "my-cap-billing-pubsub" {
-  project = var.project_id
+  project = var.deploy_project_id
   name    = var.pubsub_topic
   message_storage_policy {
     allowed_persistence_regions = ["${var.region}"]
@@ -115,7 +121,7 @@ resource "google_pubsub_topic" "my-cap-billing-pubsub" {
 # Create Pub/Sub subscription to have the possibility to read (pull) the messages via the console (dashboard)
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription
 resource "google_pubsub_subscription" "my-cap-billing-pubsub-pull" {
-  project    = var.project_id
+  project    = var.deploy_project_id
   name       = "${var.pubsub_topic}-pull"
   topic      = google_pubsub_topic.my-cap-billing-pubsub.name
   depends_on = [google_pubsub_topic.my-cap-billing-pubsub]
@@ -129,7 +135,7 @@ resource "google_pubsub_subscription" "my-cap-billing-pubsub-pull" {
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/billing_budget
 resource "google_billing_budget" "my-cap-billing-budget" {
   billing_account = data.google_billing_account.my-billing-account.id
-  display_name    = "Unlink ${var.project_id} from billing account"
+  display_name    = "Unlink monitored projects from billing account"
 
   amount {
     specified_amount {
@@ -143,7 +149,7 @@ resource "google_billing_budget" "my-cap-billing-budget" {
   }
 
   budget_filter {
-    projects               = ["projects/${data.google_project.my-project.number}"]
+    projects               = [for p in data.google_project.monitored-projects : "projects/${p.number}"]
     credit_types_treatment = "INCLUDE_ALL_CREDITS"
   }
 
@@ -165,7 +171,7 @@ resource "google_billing_budget" "my-cap-billing-budget" {
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/storage_bucket
 resource "google_storage_bucket" "my-cap-billing-bucket" {
   name                        = var.bucket_name
-  project                     = var.project_id
+  project                     = var.deploy_project_id
   location                    = var.region
   force_destroy               = true
   uniform_bucket_level_access = true
@@ -224,7 +230,7 @@ resource "random_id" "my-cap-billing-function" {
 resource "google_cloudfunctions2_function" "my-cap-billing-function" {
   name        = "cap-billing-${random_id.my-cap-billing-function.hex}"
   description = "Function to unlink project from billing account"
-  project     = var.project_id
+  project     = var.deploy_project_id
   location    = var.region
 
   build_config {
@@ -245,7 +251,8 @@ resource "google_cloudfunctions2_function" "my-cap-billing-function" {
     timeout_seconds       = 120
     service_account_email = google_service_account.my-cap-billing-service-account.email
     environment_variables = {
-      MY_BUDGET_ALERT_ID = "${google_billing_budget.my-cap-billing-budget.id}"
+      MY_BUDGET_ALERT_ID    = "${google_billing_budget.my-cap-billing-budget.id}"
+      MONITORED_PROJECT_IDS = join(",", var.monitored_project_ids)
     }
   }
 
