@@ -56,3 +56,8 @@ variable "region" {
   description = "Region for the resources"
   default  = "us-central1"
 }
+variable "bucket_name" {
+  type        = string
+  nullable    = false
+  description = "The GCS bucket name to store the Cloud Function source code"
+}

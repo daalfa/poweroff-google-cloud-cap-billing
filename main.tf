@@ -16,6 +16,13 @@
 # MAIN
 ###############################################################################
 
+terraform {
+  required_version = ">= 1.1.9"
+  backend "gcs" {
+    prefix = "terraform/state"
+  }
+}
+
 # Provider for lifecycle management of GCP resources
 # https://registry.terraform.io/providers/hashicorp/google/latest
 provider "google" {
@@ -154,14 +161,10 @@ resource "google_billing_budget" "my-cap-billing-budget" {
 # BUCKET and SOURCE CODE for CLOUD FUNCTION
 ###############################################################################
 
-# Generate random UUID for bucket
-resource "random_uuid" "my-cap-billing-bucket" {
-}
-
 # Create bucket for Cloud Function source code
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/storage_bucket
 resource "google_storage_bucket" "my-cap-billing-bucket" {
-  name                        = random_uuid.my-cap-billing-bucket.id
+  name                        = var.bucket_name
   project                     = var.project_id
   location                    = var.region
   force_destroy               = true
@@ -225,7 +228,7 @@ resource "google_cloudfunctions2_function" "my-cap-billing-function" {
   location    = var.region
 
   build_config {
-    runtime     = "python311"
+    runtime     = "python312"
     entry_point = "stop_billing"
     source {
       storage_source {
