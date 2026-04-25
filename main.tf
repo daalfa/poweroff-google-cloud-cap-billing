@@ -228,7 +228,7 @@ resource "google_cloudfunctions2_function" "my-cap-billing-function" {
   location    = var.region
 
   build_config {
-    runtime     = "python312"
+    runtime     = "python314"
     entry_point = "stop_billing"
     source {
       storage_source {

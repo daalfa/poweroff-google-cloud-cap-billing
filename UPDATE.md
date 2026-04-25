@@ -11,7 +11,7 @@ The Cloud Function has been upgraded from Gen 1 to **Gen 2 (Cloud Run Functions)
 - **Memory:** Increased default available memory to **256MB** for more robust execution.
 
 ### 2. Python Runtime Update
-- **Version:** Upgraded to **Python 3.12** (which is the absolute latest version fully supported by Google Cloud Run Functions at the time of this update, since Python 3.14 is not yet natively supported).
+- **Version:** Upgraded to **Python 3.14**.
 - **Security:** Ensures long-term support and addresses security vulnerabilities in older runtimes.
 
 ### 3. Remote Terraform Backend (GCS)
@@ -40,12 +40,24 @@ If you clone this project to a new machine or a new Cloud Shell session, you nee
 gcloud config set project YOUR_PROJECT_ID
 ```
 
-**2. Initialize Terraform (connecting it to your remote GCS state bucket):**
+**2. Create a GCS bucket for the Terraform state:**
+Before initializing Terraform with a remote state, you must create the bucket in your Google Cloud project using `gcloud`.
+
+```bash
+gcloud storage buckets create gs://YOUR_TERRAFORM_STATE_BUCKET_NAME \
+  --location=us-central1 \
+  --project=YOUR_PROJECT_ID
+
+# (Optional but recommended) Enable versioning to keep history of your state
+gcloud storage buckets update gs://YOUR_TERRAFORM_STATE_BUCKET_NAME --versioning
+```
+
+**3. Initialize Terraform (connecting it to your remote GCS state bucket):**
 ```bash
 terraform init -backend-config="bucket=YOUR_TERRAFORM_STATE_BUCKET_NAME"
 ```
 
-**3. Apply the changes with your variables:**
+**4. Apply the changes with your variables:**
 ```bash
 terraform apply \
   -var="project_id=YOUR_PROJECT_ID" \
