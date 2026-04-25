@@ -218,36 +218,45 @@ resource "random_id" "my-cap-billing-function" {
 
 # Create Cloud Function with Pub/Sub event trigger
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/cloudfunctions_function
-resource "google_cloudfunctions_function" "my-cap-billing-function" {
+resource "google_cloudfunctions2_function" "my-cap-billing-function" {
   name        = "cap-billing-${random_id.my-cap-billing-function.hex}"
   description = "Function to unlink project from billing account"
   project     = var.project_id
-  region      = var.region
-  # Runtime ID
-  # https://cloud.google.com/functions/docs/concepts/exec#runtimes
-  runtime = "python39"
-  # Service account to run the function with
-  service_account_email = google_service_account.my-cap-billing-service-account.email
-  available_memory_mb   = 128
-  source_archive_bucket = google_storage_bucket.my-cap-billing-bucket.name
-  source_archive_object = google_storage_bucket_object.my-cap-billing-archive.name
-  entry_point           = "stop_billing"
-  timeout               = 120
-  min_instances         = 0
-  max_instances         = 1
-  event_trigger {
-    event_type = "google.pubsub.topic.publish"
-    resource   = google_pubsub_topic.my-cap-billing-pubsub.name
-    failure_policy {
-      retry = false
+  location    = var.region
+
+  build_config {
+    runtime     = "python311"
+    entry_point = "stop_billing"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.my-cap-billing-bucket.name
+        object = google_storage_bucket_object.my-cap-billing-archive.name
+      }
     }
   }
+
+  service_config {
+    max_instance_count    = 1
+    min_instance_count    = 0
+    available_memory      = "256M"
+    timeout_seconds       = 120
+    service_account_email = google_service_account.my-cap-billing-service-account.email
+    environment_variables = {
+      MY_BUDGET_ALERT_ID = "${google_billing_budget.my-cap-billing-budget.id}"
+    }
+  }
+
+  event_trigger {
+    trigger_region = var.region
+    event_type     = "google.cloud.pubsub.topic.v1.messagePublished"
+    pubsub_topic   = google_pubsub_topic.my-cap-billing-pubsub.id
+    retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
+  }
+
   labels = {
     terraform = "true"
   }
-  environment_variables = {
-    MY_BUDGET_ALERT_ID = "${google_billing_budget.my-cap-billing-budget.id}"
-  }
+
   depends_on = [
     google_pubsub_topic.my-cap-billing-pubsub,
     null_resource.wait-for-archive
